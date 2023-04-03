@@ -286,7 +286,7 @@ async fn transfer_file(
     let mut source_file = fs::File::open(source_path)?;
     let mut target_file = fs::File::create(target_path)?;
 
-    let mut buffer = [0; 1024 * 200];
+    let mut buffer = [0; 1024 * 100];
     let mut total_bytes = 0;
     let start_time = time::Instant::now();
     // let wait_time = time::Duration::from_millis(1);

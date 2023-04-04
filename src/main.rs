@@ -1,3 +1,4 @@
+use log::{debug, error, info, warn};
 use prettytable::{Cell, Row, Table};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -102,11 +103,13 @@ impl TotalInfo {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    log4rs::init_file("./log4rs.yaml", Default::default()).unwrap();
     // 获取用户设置
     let userset: UserSet = {
         let user_set_str = fs::read_to_string("./userset.json")?;
         serde_json::from_str(&user_set_str)?
     };
+    debug!("获取用户设置：{:?}", userset);
     // 检测用户设置
     check_userset(&userset)?;
 
@@ -114,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for item in userset.hdisks.iter() {
         let final_path = &item.target_dir;
         remove_temp(final_path).await?;
+        info!("清理上次未传输完成的tmp文件:{final_path}");
     }
 
     // 得到用户设置的源目录
@@ -135,12 +139,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let total_info = TotalInfo { hdisk_infos };
     total_info.show();
+
     let total_info = Arc::new(Mutex::new(total_info));
     let transfered_file = Arc::new(Mutex::new(vec![]));
 
     // 执行多线程
     let mut handles = vec![];
-
     for (id, h_disk) in userset.hdisks.into_iter().enumerate() {
         let total_info = Arc::clone(&total_info);
         let transfered_file = Arc::clone(&transfered_file);
@@ -153,40 +157,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 time::sleep(time::Duration::from_secs(10)).await;
                 // 查看目录下所有的文件
                 let plot_names = scan_plot(&sourse_dir).await.unwrap();
+                // println!("id: {id}:{:?}", plot_names);
+                debug!("线程{id}:扫描sourse_dir结果:{:?}", plot_names);
 
                 // 选择要转移的文件名
                 let mut file_name = "".to_owned();
                 {
+                    debug!("线程{}:等待transfered_file和total_info,用于判断优先级", id);
                     let mut transfered_file = transfered_file.lock().unwrap();
                     let mut total_info = total_info.lock().unwrap();
+                    debug!("线程{id}:已经获取transfered_file和total_info所有权,用于判断优先级");
 
                     'for_up: for name in plot_names {
                         if !transfered_file.contains(&name) {
-                            {
-                                // 判断是否存在最优线程
-                                let current_remain_num = total_info.hdisk_infos[id].limit_num
-                                    - total_info.hdisk_infos[id].finished_num;
-
-                                for item in total_info.hdisk_infos.iter() {
-                                    let item_remain_num = item.limit_num - item.finished_num;
-                                    if item_remain_num > current_remain_num
-                                        && item.state.contains("正在检测")
-                                    {
-                                        // println!("{id}跳过：因为：{:?}", item);
-                                        drop(total_info);
-                                        drop(transfered_file);
-                                        continue 'continue_up;
-                                    }
+                            // 判断是否存在最优线程
+                            let current_remain_num = total_info.hdisk_infos[id].limit_num
+                                - total_info.hdisk_infos[id].finished_num;
+                            for item in total_info.hdisk_infos.iter() {
+                                let item_remain_num = item.limit_num - item.finished_num;
+                                if item_remain_num > current_remain_num
+                                    && item.state.contains("正在检测")
+                                {
+                                    debug!("线程{id}:选择出让本次捕获的{name}。因为{}目前空闲，且空间更充足",item.target_dir);
+                                    drop(total_info);
+                                    drop(transfered_file);
+                                    continue 'continue_up;
                                 }
-                                total_info.change_to_transfering(&name, id);
                             }
+
+                            total_info.change_to_transfering(&name, id);
                             transfered_file.push(name.clone());
+                            debug!("线程{id}:成功捕获{name}");
                             file_name = name.clone();
                             break 'for_up;
                         }
                     }
-                    drop(transfered_file);
                     drop(total_info);
+                    drop(transfered_file);
                 }
 
                 // 判断是否找到要转移的文件
@@ -197,7 +204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &sourse_dir,
                         &h_disk.target_dir,
                         h_disk.limit_rate,
-                        &total_info,
+                        Arc::clone(&total_info),
                         id,
                     )
                     .await
@@ -206,8 +213,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     total_num = total_num + 1;
                     // println!("{}>>>>>当前转移个数:{}", h_disk.target_dir, total_num)
                     {
+                        debug!("线程{}:等待total_info,来让完成数量+1", id);
                         let mut total_info = total_info.lock().unwrap();
                         total_info.finished_add_one(id);
+                        debug!("线程{}:已得到total_info所有权,完成数量+1", id);
                         drop(total_info);
                     }
                 }
@@ -219,7 +228,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         handles.push(handle);
     }
-
     for handle in handles {
         handle.await.unwrap();
     }
@@ -259,15 +267,18 @@ fn check_userset(the_set: &UserSet) -> Result<(), Box<dyn std::error::Error>> {
     let sourse_dir_path = Path::new(sourse_dir);
     if !sourse_dir_path.is_dir() {
         let err_msg = format!("err:{}不是一个文件夹!", sourse_dir);
+        error!("{err_msg}");
         return Err(err_msg.into());
     }
     for item in the_set.hdisks.iter() {
         let target_path = Path::new(&item.target_dir);
         if !target_path.is_dir() {
             let err_msg = format!("err:{}不是一个文件夹!", item.target_dir);
+            error!("{err_msg}");
             return Err(err_msg.into());
         }
     }
+    info!("检查用户设置通过");
     Ok(())
 }
 
@@ -276,9 +287,10 @@ async fn transfer_file(
     source_dir: &str,
     target_dir: &str,
     limit_transfer_rate: f32,
-    show_info: &Mutex<TotalInfo>,
+    show_info: Arc<Mutex<TotalInfo>>,
     id: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    info!("线程{id}:开始从{source_dir}转移{filename}到{target_dir},限速{limit_transfer_rate}m/s");
     let source_path = Path::new(source_dir).join(filename);
     let temp_name = format!("{}.temp", filename);
     let target_path = Path::new(target_dir).join(&temp_name);
@@ -286,7 +298,7 @@ async fn transfer_file(
     let mut source_file = fs::File::open(source_path)?;
     let mut target_file = fs::File::create(target_path)?;
 
-    let mut buffer = [0; 1024 * 100];
+    let mut buffer = [0; 1024 * 400];
     let mut total_bytes = 0;
     let start_time = time::Instant::now();
     // let wait_time = time::Duration::from_millis(1);
@@ -308,12 +320,14 @@ async fn transfer_file(
 
         if read_time % 4000 == 0 {
             {
+                debug!("线程{}:等待show_inf来更新速率", id);
                 let mut show_info = show_info.lock().unwrap();
                 show_info.update_current_rate(
                     transfer_rate,
                     total_bytes as f32 / 1024.0 / 1024.0,
                     id,
                 );
+                debug!("线程{}:已获取show_info的所有权,更新了速率和传输量", id);
                 drop(show_info);
             }
         }
@@ -328,11 +342,12 @@ async fn transfer_file(
 
     // 删除源文件
     std::fs::remove_file(format!("{}/{}", source_dir, filename))?;
-    println!("{}删除成功。", filename);
+    info!("线程{id}:{}删除成功。", filename);
 
     // 修改目标文件为plot后缀
     let temp_path = format!("{}/{}", target_dir, temp_name);
     let final_path = format!("{}/{}", target_dir, filename);
+    info!("线程{id}:将{}重命名为{}", temp_path, final_path);
     fs::rename(temp_path, final_path)?;
     Ok(())
 }

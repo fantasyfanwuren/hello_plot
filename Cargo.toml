@@ -1,12 +1,14 @@
 [package]
-name = "hello_plot"
+name = "hello"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = { version = "1.0.159", features = ["derive"] }
-prettytable = "0.10.0"
+tokio = {version="1.27.0",features = ["full"]}
+serde = {version="1.0.152",features = ["derive"]}
 serde_json = "1.0.95"
-tokio = { version = "1.27.0", features = ["full"] }
+prettytable-rs = "0.10.0"
+log4rs = "1.2.0"
+log = "0.4.17"

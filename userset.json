@@ -1,20 +1,20 @@
 {
-    "sourse_dir": "D:/test/4",
+    "sourse_dir": "/mnt/temp",
     "hdisks": [
         {
-            "target_dir": "D:/test/2",
-            "limit_num": 103,
-            "limit_rate": 132.0
+            "target_dir": "/mnt/okchia/072/new",
+            "limit_num": 20,
+            "limit_rate": 150.0
         },
         {
-            "target_dir": "D:/test/1",
-            "limit_num": 105,
-            "limit_rate": 136.0
+            "target_dir": "/mnt/okchia/071/new",
+            "limit_num": 100,
+            "limit_rate": 150.0
         },
         {
-            "target_dir": "D:/test/3",
-            "limit_num": 25,
-            "limit_rate": 32.0
+            "target_dir": "/mnt/okchia/070/new",
+            "limit_num": 100,
+            "limit_rate": 150.0
         }
     ]
 }
